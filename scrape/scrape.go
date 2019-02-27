@@ -22,7 +22,10 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -293,6 +296,7 @@ func (sp *scrapePool) reload(cfg *config.ScrapeConfig) error {
 			oldLoop.stop()
 			wg.Done()
 
+			fmt.Println("reloading")
 			go newLoop.run(interval, timeout, nil)
 		}(oldLoop, newLoop)
 
@@ -365,6 +369,7 @@ func (sp *scrapePool) sync(targets []*Target) {
 			sp.activeTargets[hash] = t
 			sp.loops[hash] = l
 
+			fmt.Printf("running scrape loop for %s\n", t.String())
 			go l.run(interval, timeout, nil)
 		} else {
 			// Need to keep the most updated labels information
@@ -816,6 +821,10 @@ func (sl *scrapeLoop) run(interval, timeout time.Duration, errc chan<- error) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	// custom: only scrape on SIGUSR1
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, syscall.SIGUSR1)
+
 mainLoop:
 	for {
 		select {
@@ -889,7 +898,9 @@ mainLoop:
 			return
 		case <-sl.scrapeCtx.Done():
 			break mainLoop
-		case <-ticker.C:
+		// case <-ticker.C:
+		case <-c:
+			fmt.Printf("SIGUSR1, scrape\n")
 		}
 	}
 
