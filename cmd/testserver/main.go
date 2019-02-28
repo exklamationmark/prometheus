@@ -5,31 +5,58 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+var (
+	// make N buckets (N%2==0) in [mean-domain/2.0, ..., mean, ..., mean+domain/2.0],
+	normMean   = float64(10.0)
+	normDomain = float64(20.0)
+	normCount  = 20
+
+	rpcDurationsHistogram = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "rpc_durations_histogram_seconds",
+		Help:    "RPC latency distributions.",
+		Buckets: prometheus.LinearBuckets(normMean-(normDomain/2.0), normDomain/float64(normCount), normCount),
+	})
 )
 
 func main() {
+	prometheus.MustRegister(rpcDurationsHistogram)
+
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, syscall.SIGUSR1)
 
 	reader := bufio.NewReader(os.Stdin)
+	go func() {
+		for {
+			<-c
+			fmt.Println("adding a new sample. what should its value be?")
 
-	http.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Println("scraped. enter new line:")
-		b, err := reader.ReadBytes('\n')
-		if err != nil {
-			fmt.Println("failed to read input; err= %q\n", err)
-			w.WriteHeader(http.StatusInternalServerError)
+			str, err := reader.ReadString('\n')
+			if err != nil {
+				fmt.Printf("failed to read input; err= %q\n", err)
+				continue
+			}
 
-			return
+			val, err := strconv.ParseFloat(str[:len(str)-1], 64)
+			if err != nil {
+				fmt.Printf("cannot parse float; err= %q\n", err)
+				continue
+			}
+
+			rpcDurationsHistogram.Observe(val)
+			fmt.Printf("added sample with value: %v\n", val)
 		}
+	}()
 
-		w.Header().Add("Content-Type", "text/plain; version=0.0.4")
-		w.WriteHeader(http.StatusOK)
-
-		w.Write(b)
-		w.Write([]byte("\n"))
-
-		fmt.Printf("wrote: %q\n", string(b))
-	})
-
+	fmt.Println("running server")
+	http.Handle("/metrics", promhttp.Handler())
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		fmt.Printf("cannot run server; err= %q\n")
 	}
