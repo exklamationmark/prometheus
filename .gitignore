@@ -8,6 +8,7 @@
 
 /prometheus
 /promtool
+/testserver
 benchmark.txt
 /data
 /cmd/prometheus/data
